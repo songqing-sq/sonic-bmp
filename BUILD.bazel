@@ -1,0 +1,155 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@sonic_build_infra//sonic_deb:sonic_deb.bzl", "sonic_deb")
+
+package(default_visibility = ["//visibility:public"])
+
+VERSION = "0.1"
+
+# Expand openbmpd_version.h.in -> openbmpd_version.h.
+# Mirrors CMake's `configure_file(openbmpd_version.h.in generated/openbmpd_version.h)`.
+# Top-level CMakeLists.txt sets OPENBMPD_VERSION = 0.14.0-0.
+expand_template(
+    name = "openbmpd_version_h",
+    out = "openbmpd_version.h",
+    substitutions = {
+        "@OPENBMPD_VERSION@": "0.14.0-0",
+    },
+    template = "openbmpd_version.h.in",
+)
+
+# All non-kafka headers (Server/CMakeLists builds with -DENABLE_REDIS=ON which
+# excludes the entire src/kafka tree). They are made available to the .cpp
+# compilations as private headers via the `includes` attribute below.
+BMP_HDRS = [
+    "Server/src/Config.h",
+    "Server/src/Logger.h",
+    "Server/src/MsgBusInterface.hpp",
+    "Server/src/RedisManager.h",
+    "Server/src/client_thread.h",
+    "Server/src/md5.h",
+    "Server/src/safeQueue.hpp",
+    "Server/src/bgp/AddPathDataContainer.h",
+    "Server/src/bgp/EVPN.h",
+    "Server/src/bgp/ExtCommunity.h",
+    "Server/src/bgp/MPReachAttr.h",
+    "Server/src/bgp/MPUnReachAttr.h",
+    "Server/src/bgp/NotificationMsg.h",
+    "Server/src/bgp/OpenMsg.h",
+    "Server/src/bgp/UpdateMsg.h",
+    "Server/src/bgp/bgp_common.h",
+    "Server/src/bgp/parseBGP.h",
+    "Server/src/bgp/linkstate/MPLinkState.h",
+    "Server/src/bgp/linkstate/MPLinkStateAttr.h",
+    "Server/src/bmp/BMPListener.h",
+    "Server/src/bmp/BMPReader.h",
+    "Server/src/bmp/parseBMP.h",
+    "Server/src/redis/MsgBusImpl_redis.h",
+]
+
+# SRC_FILES from Server/CMakeLists.txt with ENABLE_REDIS=ON (drops the kafka
+# glob, appends RedisManager.cpp + redis/MsgBusImpl_redis.cpp).
+BMP_SRCS = [
+    "Server/src/bmp/BMPListener.cpp",
+    "Server/src/bmp/BMPReader.cpp",
+    "Server/src/bmp/parseBMP.cpp",
+    "Server/src/openbmp.cpp",
+    "Server/src/md5.cpp",
+    "Server/src/Logger.cpp",
+    "Server/src/Config.cpp",
+    "Server/src/client_thread.cpp",
+    "Server/src/bgp/parseBGP.cpp",
+    "Server/src/bgp/NotificationMsg.cpp",
+    "Server/src/bgp/OpenMsg.cpp",
+    "Server/src/bgp/UpdateMsg.cpp",
+    "Server/src/bgp/MPReachAttr.cpp",
+    "Server/src/bgp/MPUnReachAttr.cpp",
+    "Server/src/bgp/ExtCommunity.cpp",
+    "Server/src/bgp/AddPathDataContainer.cpp",
+    "Server/src/bgp/EVPN.cpp",
+    "Server/src/bgp/linkstate/MPLinkState.cpp",
+    "Server/src/bgp/linkstate/MPLinkStateAttr.cpp",
+    "Server/src/RedisManager.cpp",
+    "Server/src/redis/MsgBusImpl_redis.cpp",
+]
+
+# Header-only library wrapping the generated version header so the binary can
+# pick it up via `includes`.
+cc_library(
+    name = "openbmpd_version_hdr",
+    hdrs = [":openbmpd_version_h"],
+    includes = ["."],
+)
+
+# openbmpd binary -- equivalent of `add_executable(openbmpd ${SRC_FILES})`
+# from Server/CMakeLists.txt with -DENABLE_REDIS=ON.
+cc_binary(
+    name = "openbmpd",
+    srcs = BMP_SRCS + BMP_HDRS,
+    copts = [
+        "-std=c++14",
+        "-Wno-unused-result",
+    ],
+    defines = ["REDIS_ENABLED"],
+    # Server/src/*.cpp files use double-quote includes like "BMPListener.h",
+    # "parseBGP.h", "MPLinkState.h", "MsgBusImpl_redis.h". CMake adds the
+    # corresponding directories to the search path; mirror that here.
+    includes = [
+        "Server/src",
+        "Server/src/bgp",
+        "Server/src/bgp/linkstate",
+        "Server/src/bmp",
+        "Server/src/redis",
+    ],
+    # Runtime libs that aren't already brought in by cc deps. swsscommon
+    # and hiredis arrive transitively via the deps below.
+    linkopts = [
+        "-lpthread",
+        "-lrt",
+        "-ldl",
+    ],
+    # swsscommon.so transitively pulls libnl-3.so, libyang.so.3 etc.; mirror
+    # dhcprelay's pattern of declaring the same dynamic deps so the link
+    # line finds those .so's via rpath-link.
+    dynamic_deps = [
+        "@libnl3//:libnl_3_shared",
+        "@libnl3//:libnl_nf_3_shared",
+        "@libnl3//:libnl_route_3_shared",
+        "@libyang3//:yang_shared",
+        "@sonic_swss_common//:swsscommon_shared",
+    ],
+    deps = [
+        ":openbmpd_version_hdr",
+        # Header-only consumers of swss/dbconnector.h, swss/table.h, ...
+        "@sonic_swss_common//:swsscommon",
+        # Build-time apt deps -- supply -I and -l for the dev packages.
+        # Boost xpressive / exception / algorithm are header-only; the meta
+        # package libboost1.83-dev pulls in all the boost1.83 dev headers.
+        "@bmp_deps//libboost1.83-dev:libboost1.83",
+        "@bmp_deps//libhiredis-dev:libhiredis",
+        "@bmp_deps//libsasl2-dev:libsasl2",
+        "@bmp_deps//libssl-dev:libssl",
+        "@bmp_deps//libyaml-cpp-dev:libyaml-cpp",
+        "@bmp_deps//zlib1g-dev:z",
+    ],
+)
+
+# debian/install lays down build/Server/openbmpd at /usr/bin and
+# build/Server/openbmpd.conf at /etc/bmp. Mirror that exactly.
+sonic_deb(
+    name = "sonic-bmp_{}.deb".format(VERSION),
+    package = "sonic-bmp",
+    version = VERSION,
+    content = {
+        "/usr/bin::0755": [":openbmpd"],
+        # strip the "Server/" prefix so the file lands at /etc/bmp/openbmpd.conf.
+        "/etc/bmp:Server:0644": ["Server/openbmpd.conf"],
+    },
+    depends = ["libswsscommon"],
+    description = "SONiC BMP collector (openbmpd) with Redis msgbus backend.",
+    maintainer = "SONiC Team <linuxnetdev@microsoft.com>",
+    section = "net",
+    gen_dbg = True,
+    visibility = ["//visibility:public"],
+)

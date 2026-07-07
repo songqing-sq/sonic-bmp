@@ -1,0 +1,58 @@
+module(
+    name = "sonic-bmp",
+    version = "0.1",
+)
+
+bazel_dep(name = "rules_cc", version = "0.2.16")
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "sonic-build-infra", version = "0.0.0", repo_name = "sonic_build_infra")
+bazel_dep(name = "sonic-swss-common", version = "1.0.0", repo_name = "sonic_swss_common")
+# swsscommon.so links against libnl-3, libnl-nf-3, libnl-route-3 and
+# libyang.so.3; the openbmpd link line needs the same shared libs via
+# rpath-link so the linker can resolve swsscommon's NEEDED entries.
+bazel_dep(name = "libnl3", version = "3.7.0")
+bazel_dep(name = "libyang3", version = "3.12.2")
+bazel_dep(name = "rules_distroless", version = "0.0.0", repo_name = "rules_deb")
+
+# Build-time apt headers for compile/link of openbmpd. The runtime .so's come
+# from the SONiC base image; only the -dev packages are needed here to
+# satisfy the compiler and the linker. Boost is provided by the trixie apt
+# meta package libboost1.83-dev (dzf root MODULE.bazel has no rules_boost).
+apt = use_extension("@rules_deb//apt:extensions.bzl", "apt")
+apt.sources_list(
+    architectures = ["amd64", "arm64"],
+    components = ["main"],
+    suites = ["trixie", "trixie-updates"],
+    uris = ["https://deb.debian.org/debian"],
+)
+apt.sources_list(
+    architectures = ["amd64", "arm64"],
+    components = ["main"],
+    suites = ["trixie-security"],
+    uris = ["https://security.debian.org/debian-security"],
+)
+apt.install(
+    dependency_set = "bmp_deps",
+    packages = [
+        # Boost headers used by openbmpd's Config.[cpp,h]:
+        #   <boost/xpressive/xpressive.hpp>, <boost/exception/all.hpp>,
+        #   <boost/algorithm/string/replace.hpp>. Meta package pulls in all
+        #   the boost1.83 dev headers we need.
+        "libboost1.83-dev:amd64",
+        "libboost1.83-dev:arm64",
+        # Direct deps of openbmpd (see Server/CMakeLists.txt link_libraries).
+        "libhiredis-dev:amd64",
+        "libhiredis-dev:arm64",
+        "libsasl2-dev:amd64",
+        "libsasl2-dev:arm64",
+        "libssl-dev:amd64",
+        "libssl-dev:arm64",
+        "libyaml-cpp-dev:amd64",
+        "libyaml-cpp-dev:arm64",
+        "zlib1g-dev:amd64",
+        "zlib1g-dev:arm64",
+    ],
+    suites = ["trixie", "trixie-updates", "trixie-security"],
+)
+use_repo(apt, "bmp_deps")
