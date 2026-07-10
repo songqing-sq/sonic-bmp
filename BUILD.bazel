@@ -146,7 +146,6 @@ sonic_deb(
         # strip the "Server/" prefix so the file lands at /etc/bmp/openbmpd.conf.
         "/etc/bmp:Server:0644": ["Server/openbmpd.conf"],
     },
-    depends = ["libswsscommon"],
     description = "SONiC BMP collector (openbmpd) with Redis msgbus backend.",
     maintainer = "SONiC Team <linuxnetdev@microsoft.com>",
     section = "net",
