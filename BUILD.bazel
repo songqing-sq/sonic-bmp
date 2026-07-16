@@ -102,13 +102,6 @@ cc_binary(
         "Server/src/bmp",
         "Server/src/redis",
     ],
-    # Runtime libs that aren't already brought in by cc deps. swsscommon
-    # and hiredis arrive transitively via the deps below.
-    linkopts = [
-        "-lpthread",
-        "-lrt",
-        "-ldl",
-    ],
     # swsscommon.so transitively pulls libnl-3.so, libyang.so.3 etc.; mirror
     # dhcprelay's pattern of declaring the same dynamic deps so the link
     # line finds those .so's via rpath-link.
@@ -123,6 +116,10 @@ cc_binary(
         ":openbmpd_version_hdr",
         # Header-only consumers of swss/dbconnector.h, swss/table.h, ...
         "@sonic_swss_common//:swsscommon",
+        # pthread / rt / dl via the framework system_libs targets (not bare -l).
+        "@sonic_build_infra//system_libs:pthread",
+        "@sonic_build_infra//system_libs:rt",
+        "@sonic_build_infra//system_libs:dl",
         # Build-time apt deps -- supply -I and -l for the dev packages.
         # Boost xpressive / exception / algorithm are header-only; the meta
         # package libboost1.83-dev pulls in all the boost1.83 dev headers.
